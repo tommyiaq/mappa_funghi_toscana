@@ -5,6 +5,9 @@ on:
     - cron: '0 3 * * *'  # every day at 03:00 UTC
   workflow_dispatch:     # allows manual triggering
 
+permissions:
+  contents: write
+
 jobs:
   update-csv:
     runs-on: ubuntu-latest
@@ -27,8 +30,8 @@ jobs:
 
       - name: Commit and push if changed
         run: |
-          git config user.name "tommyiaq"
-          git config user.email "tommyiaq22@gmail.com"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
           git add assets/dati_completi.csv
           git diff --cached --quiet || git commit -m "Update CSV [automated]"
           git push
