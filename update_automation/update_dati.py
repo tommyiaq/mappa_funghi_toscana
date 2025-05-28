@@ -36,7 +36,7 @@ def fetch_station_data(station_ids):
 
 def main():
     # Read the cleaned station metadata
-    stazioni = pd.read_csv("../assets/stazioni.csv", sep=";")
+    stazioni = pd.read_csv("assets/stazioni.csv", sep=";")
     stazioni = stazioni.drop_duplicates(subset="IDStazione")
     stazioni.set_index("IDStazione", inplace=True)
 
@@ -56,8 +56,8 @@ def main():
     dati_completi.fillna(0, inplace=True)
 
     # Save result
-    dati_completi.to_csv("../assets/dati_completi.csv", encoding="utf8", index=False)
-    print("✅ File saved to ../assets/dati_completi.csv")
+    dati_completi.to_csv("assets/dati_completi.csv", encoding="utf8", index=False)
+    print("✅ File saved to assets/dati_completi.csv")
 
 if __name__ == "__main__":
     main()

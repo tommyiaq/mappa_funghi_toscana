@@ -98,7 +98,6 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final raw = response.body;
-    print(raw);
 
     final rows = const CsvToListConverter(fieldDelimiter: ',', eol: '\n')
         .convert(raw)
@@ -124,7 +123,7 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final raw = response.body;
-    
+
     final rows = const CsvToListConverter(fieldDelimiter: ',', eol: '\n').convert(raw);
     final header = rows[0];
     final latIndex = header.indexOf("LAT [°]");
