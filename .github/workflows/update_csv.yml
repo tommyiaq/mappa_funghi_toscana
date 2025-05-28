@@ -2,7 +2,7 @@ name: Update CSV Daily
 
 on:
   schedule:
-    - cron: '0 3 * * *'  # every day at 03:00 UTC
+    - cron: '30 18 * * *'  # every day at 03:00 UTC
   workflow_dispatch:     # allows manual triggering
 
 permissions:
