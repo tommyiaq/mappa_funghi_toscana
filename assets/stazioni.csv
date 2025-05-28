@@ -1,0 +1,4 @@
+"IDStazione";"StazioneExtra";"Nome";"Comune";"Provincia";"Fiume";"Strumento";"Unita' Misura";"IDSensoreRete";"LAT [°]";"LON [°]";"GB E [m]";"GB N [m]";"Quota";"QuotaTerra"
+TOS11000114;0;Abbadia S. S. - Laghetto Verde;Abbadia S.S.;SI;;pluviometro;mm;751057;42.8831027447861;11.6616225242615;1717391.08;4751286.43;910.00;2.00
+TOS11000115;0;Abbadia S. S. - Vetta Amiata;Abbadia S.S.;SI;;pluviometro;mm;747307;42.8901;11.6252;1714392.23;4751970.05;1678.00;3.00
+TOS19000115;1;Abbadia S. S. - Vetta Amiata1;Abbadia S.S.;SI;;pluviometro;mm;747327;42.8901;11.6252;1714392.23;4751970.05;1678.00;3.00
