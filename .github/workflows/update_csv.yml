@@ -27,8 +27,8 @@ jobs:
 
       - name: Commit and push if changed
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config user.name "tommyiaq"
+          git config user.email "tommyiaq22@gmail.com"
           git add assets/dati_completi.csv
           git diff --cached --quiet || git commit -m "Update CSV [automated]"
           git push
