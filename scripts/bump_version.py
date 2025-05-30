@@ -29,7 +29,7 @@ def update_version_line(new_version_line):
             else:
                 file.write(line)
 
-    print(f"✅ Updated version to: {new_version_line}")
+    print(f"Updated version to: {new_version_line}")
 
 if __name__ == "__main__":
     current = read_version_line()

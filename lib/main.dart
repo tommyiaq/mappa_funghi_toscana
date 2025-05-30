@@ -149,12 +149,12 @@ class _MapScreenState extends State<MapScreen> {
 
       result.add(CloudSpot(LatLng(lat, lon), opacity, '$name\nLat: $lat\nLon: $lon\nQuota: ${quota.toStringAsFixed(1)} m\nRain: ${sumValue.toStringAsFixed(1)} mm'));
 
-      if (sumValue > 20) {
+      if (sumValue > 30) {
         infoMarkers.add(
           Marker(
             point: LatLng(lat, lon),
-            width: 40,
-            height: 40,
+            width: 20,
+            height: 20,
             child: GestureDetector(
               onTap: () {
                 showDialog(
@@ -188,7 +188,8 @@ class _MapScreenState extends State<MapScreen> {
                 ),                  ),
                 );
               },
-              child: const Icon(Icons.location_on, color: Colors.blue, size: 30),
+              // child: const Icon(Icons.location_on, color: Colors.blue, size: 30),
+              child: Image.asset('assets/porcino.png'),
             ),
           ),
         );
