@@ -90,7 +90,7 @@ class _MapScreenState extends State<MapScreen> {
   Future<List<String>> loadAvailableDates() async {
     // final raw = await rootBundle.loadString('assets/dati_completi.csv');
     final response = await http.get(Uri.parse(
-      'https://raw.githubusercontent.com/tommyiaq/mappa_funghi_toscana/main/assets/dati_completi.csv',
+      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/stazioni.csv',
     ));
 
     if (response.statusCode != 200) {
@@ -115,7 +115,7 @@ class _MapScreenState extends State<MapScreen> {
   Future<List<CloudSpot>> loadCloudSpots(String start, String end) async {
     //final raw = await rootBundle.loadString('assets/dati_completi.csv');
     final response = await http.get(Uri.parse(
-      'https://raw.githubusercontent.com/tommyiaq/mappa_funghi_toscana/main/assets/dati_completi.csv',
+      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/stazioni.csv',
     ));
 
     if (response.statusCode != 200) {
@@ -179,7 +179,7 @@ class _MapScreenState extends State<MapScreen> {
                         }
                       },
                       child: Text(
-                        'Open in Maps',
+                        'Apri in Maps',
                         style: TextStyle(
                           color: Colors.blue,
                           decoration: TextDecoration.underline,
