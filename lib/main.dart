@@ -88,9 +88,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<List<String>> loadAvailableDates() async {
-    // final raw = await rootBundle.loadString('assets/dati_completi.csv');
     final response = await http.get(Uri.parse(
-      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/stazioni.csv',
+      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/dati_completi.csv',
     ));
 
     if (response.statusCode != 200) {
@@ -113,9 +112,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<List<CloudSpot>> loadCloudSpots(String start, String end) async {
-    //final raw = await rootBundle.loadString('assets/dati_completi.csv');
     final response = await http.get(Uri.parse(
-      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/stazioni.csv',
+      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/dati_completi.csv',
     ));
 
     if (response.statusCode != 200) {
