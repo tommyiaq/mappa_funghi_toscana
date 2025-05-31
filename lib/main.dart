@@ -3,11 +3,11 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-// import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:csv/csv.dart';
 import 'package:flutter_date_pickers/flutter_date_pickers.dart' as dp;
+import 'dart:async';
 
 void main() {
   runApp(const MyApp());
@@ -37,14 +37,21 @@ class MainScaffold extends StatefulWidget {
 class _MainScaffoldState extends State<MainScaffold> {
   int _selectedIndex = 0;
   final List<Widget> _pages = [
-    MapScreen(),
-    ArchivioPage(),
+    MapView(key: PageStorageKey('HomeMapView')),
+    MapView(key: PageStorageKey('ArchivioMapView'), isArchivio: true),
   ];
+  final PageStorageBucket _bucket = PageStorageBucket();
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_selectedIndex],
+      body: PageStorage(
+        bucket: _bucket,
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: _pages,
+        ),
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (index) {
@@ -200,15 +207,9 @@ class _MapViewState extends State<MapView> {
 
   // Overload loadCloudSpots to take mushroom type and use correct overlay color/icon
   Future<List<CloudSpot>> loadCloudSpots(String start, String end, String mushroomType) async {
-    final response = await http.get(Uri.parse(
-      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/dati_completi.csv',
-    ));
-    if (response.statusCode != 200) {
-      throw Exception('Failed to load CSV');
-    }
-    final raw = response.body;
-    final rows = const CsvToListConverter(fieldDelimiter: ',', eol: '\n').convert(raw);
-    final header = rows[0];
+    await _ensureCsvLoaded();
+    final rows = _csvRowsCache!;
+    final header = _csvHeaderCache!;
     final latIndex = header.indexOf("LAT [°]");
     final lonIndex = header.indexOf("LON [°]");
     final quotaIndex = header.indexOf("Quota");
@@ -218,28 +219,43 @@ class _MapViewState extends State<MapView> {
     final dateIndices = startIdx == endIdx
         ? [startIdx]
         : List.generate(endIdx - startIdx + 1, (i) => startIdx + i);
-    List<CloudSpot> result = [];
-    for (final row in rows.skip(1)) {
-      final double lat = row[latIndex] as double;
-      final double lon = row[lonIndex] as double;
-      final String name = row[nameIndex].toString();
-      final double quota = (row[quotaIndex] as num?)?.toDouble() ?? 0.0;
-      final sumValue = dateIndices.fold<double>(
-          0, (sum, i) => sum + ((row[i] as num?)?.toDouble() ?? 0.0));
-      final double opacity = computeOpacity(sumValue);
-      result.add(CloudSpot(LatLng(lat, lon), opacity, '${name}\nQuota: ${quota.toStringAsFixed(1)} m\nRain: ${sumValue.toStringAsFixed(1)} mm', sumValue));
-    }
-    return result;
+
+  // Use compute to run in background isolate
+  final List<Map<String, dynamic>> rawSpots = await compute(computeCloudSpots, {
+    'rows': rows,
+    'header': header,
+    'latIndex': latIndex,
+    'lonIndex': lonIndex,
+    'quotaIndex': quotaIndex,
+    'nameIndex': nameIndex,
+    'dateIndices': dateIndices,
+    'mushroomType': mushroomType,
+  });
+
+  // Map to CloudSpot and compute opacity on main thread
+  return rawSpots.map((data) {
+    final double opacity = computeOpacity(data['sumValue']);
+    return CloudSpot(
+      LatLng(data['lat'], data['lon']),
+      opacity,
+      '${data['name']}\nQuota: ${data['quota'].toStringAsFixed(1)} m\nRain: ${data['sumValue'].toStringAsFixed(1)} mm',
+      data['sumValue'],
+    );
+  }).toList();
   }
 
   List<Marker> buildMarkers(List<CloudSpot> spots, String mushroomType) {
-    final iconAsset = mushroomType == 'Porcini' ? 'assets/porcino.png' : 'assets/giallarella.png';
+    // Use default marker icon in Archivio, custom icon in Home
+    final bool isArchivio = widget.isArchivio;
+    final iconAsset = isArchivio
+        ? null
+        : (mushroomType == 'Porcini' ? 'assets/porcino.png' : 'assets/giallarella.png');
     final threshold = mushroomType == 'Porcini' ? 50.0 : 30.0;
     return spots.where((spot) => spot.opacity > 0.0 && spot.cumulatedValue > threshold).map((spot) =>
       Marker(
         point: spot.position,
-        width: 20,
-        height: 20,
+        width: isArchivio ? 15 : (mushroomType == 'Porcini' ? 25 : 25),
+        height: isArchivio ? 15 : (mushroomType == 'Porcini' ? 25 : 25),
         child: GestureDetector(
           onTap: () {
             showDialog(
@@ -272,7 +288,9 @@ class _MapViewState extends State<MapView> {
               ),
             );
           },
-          child: Image.asset(iconAsset),
+          child: iconAsset == null
+              ? const Icon(Icons.location_on, color: Colors.red, size: 30)
+              : Image.asset(iconAsset),
         ),
       )
     ).toList();
@@ -339,6 +357,23 @@ class _MapViewState extends State<MapView> {
 
   // Add this method to load available dates from the CSV header
   Future<List<String>> loadAvailableDates() async {
+    await _ensureCsvLoaded();
+    final header = _csvHeaderCache!;
+    final dateRegExp = RegExp(r'\d{2}/\d{2}/\d{4}');
+    final dateColumns = header.where((h) => h is String && dateRegExp.hasMatch(h)).cast<String>().toList();
+    if (dateColumns.isNotEmpty) {
+      minCsvDate = _parseCsvDate(dateColumns.first);
+      maxCsvDate = _parseCsvDate(dateColumns.last);
+    }
+    return dateColumns;
+  }
+
+  static List<List<dynamic>>? _csvRowsCache;
+  static List<dynamic>? _csvHeaderCache;
+
+  // Add a helper to load and cache the CSV
+  Future<void> _ensureCsvLoaded() async {
+    if (_csvRowsCache != null && _csvHeaderCache != null) return;
     final response = await http.get(Uri.parse(
       'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/dati_completi.csv',
     ));
@@ -347,17 +382,11 @@ class _MapViewState extends State<MapView> {
     }
     final raw = response.body;
     final rows = const CsvToListConverter(fieldDelimiter: ',', eol: '\n').convert(raw);
-    final header = rows[0] as List<dynamic>;
-    // Date columns are in the format dd/MM/yyyy, skip the first columns (LAT, LON, Quota, Nome, etc.)
-    final dateRegExp = RegExp(r'\d{2}/\d{2}/\d{4}');
-    final dateColumns = header.where((h) => h is String && dateRegExp.hasMatch(h)).cast<String>().toList();
-    // Set min/max for date picker
-    if (dateColumns.isNotEmpty) {
-      minCsvDate = _parseCsvDate(dateColumns.first);
-      maxCsvDate = _parseCsvDate(dateColumns.last);
-    }
-    return dateColumns;
+    _csvRowsCache = rows;
+    _csvHeaderCache = rows[0] as List<dynamic>;
   }
+
+  Timer? _debounceDayPicker;
 
   @override
   Widget build(BuildContext context) {
@@ -372,59 +401,69 @@ class _MapViewState extends State<MapView> {
                   children: [
                     // Mushroom multi-select
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: null,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Tipi di fungo',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        selectedItemBuilder: (context) {
-                          final selected = [for (int i = 0; i < mushroomTypes.length; i++) if (selectedMushrooms[i]) mushroomTypes[i]];
-                          return mushroomTypes.map((type) => Row(
-                            children: [
-                              ...selected.map((s) => Row(
-                                children: [
-                                  Icon(Icons.check_circle, color: Colors.green, size: 18),
-                                  const SizedBox(width: 4),
-                                  Text(s),
-                                  const SizedBox(width: 8),
-                                ],
-                              )),
-                            ],
-                          )).toList();
-                        },
-                        items: mushroomTypes.map((type) => DropdownMenuItem(
-                          value: type,
-                          child: StatefulBuilder(
-                            builder: (context, setStateDD) => CheckboxListTile(
-                              value: selectedMushrooms[mushroomTypes.indexOf(type)],
-                              onChanged: (val) {
-                                setState(() {
-                                  selectedMushrooms[mushroomTypes.indexOf(type)] = val!;
-                                });
-                                loadAndSetClouds();
-                                Navigator.pop(context);
+                      child: Builder(
+                        builder: (context) => GestureDetector(
+                          onTap: () async {
+                            final List<bool> tempSelection = List.from(selectedMushrooms);
+                            final result = await showDialog<List<bool>>(
+                              context: context,
+                              builder: (context) {
+                                return AlertDialog(
+                                  title: const Text('Seleziona tipi di fungo'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      for (int i = 0; i < mushroomTypes.length; i++)
+                                        CheckboxListTile(
+                                          value: tempSelection[i],
+                                          onChanged: (val) {
+                                            tempSelection[i] = val!;
+                                            (context as Element).markNeedsBuild();
+                                          },
+                                          title: Text(mushroomTypes[i]),
+                                          controlAffinity: ListTileControlAffinity.leading,
+                                        ),
+                                    ],
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, null),
+                                      child: const Text('Annulla'),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed: () => Navigator.pop(context, tempSelection),
+                                      child: const Text('Applica'),
+                                    ),
+                                  ],
+                                );
                               },
-                              title: Text(type),
-                              controlAffinity: ListTileControlAffinity.leading,
+                            );
+                            if (result != null && result != selectedMushrooms) {
+                              setState(() {
+                                selectedMushrooms.setAll(0, result);
+                              });
+                              await loadAndSetClouds();
+                            }
+                          },
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Tipi di fungo',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            child: Row(
+                              children: [
+                                for (int i = 0; i < mushroomTypes.length; i++)
+                                  if (selectedMushrooms[i])
+                                    Row(children: [
+                                      Icon(Icons.check_circle, color: Colors.green, size: 18),
+                                      const SizedBox(width: 4),
+                                      Text(mushroomTypes[i]),
+                                      const SizedBox(width: 8),
+                                    ])
+                              ],
                             ),
                           ),
-                        )).toList(),
-                        onChanged: (_) {}, // Required but handled in CheckboxListTile
-                        icon: const Icon(Icons.arrow_drop_down),
-                        hint: Row(
-                          children: [
-                            ...[for (int i = 0; i < mushroomTypes.length; i++) if (selectedMushrooms[i])
-                              Row(children: [
-                                Icon(Icons.check_circle, color: Colors.green, size: 18),
-                                const SizedBox(width: 4),
-                                Text(mushroomTypes[i]),
-                                const SizedBox(width: 8),
-                              ])
-                            ]
-                          ],
                         ),
                       ),
                     ),
@@ -458,7 +497,10 @@ class _MapViewState extends State<MapView> {
                           setState(() {
                             selectedDayIndex = val!;
                           });
-                          loadAndSetClouds();
+                          _debounceDayPicker?.cancel();
+                          _debounceDayPicker = Timer(const Duration(milliseconds: 350), () {
+                            loadAndSetClouds();
+                          });
                         },
                       ),
                     ),
@@ -517,7 +559,6 @@ class _MapViewState extends State<MapView> {
                 children: [
                   TileLayer(
                     urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    subdomains: const ['a', 'b', 'c'],
                     userAgentPackageName: 'com.example.mappa_funghi',
                   ),
                   // Overlays for each selected mushroom type
@@ -614,4 +655,34 @@ class GradientCloudImage extends ImageProvider<GradientCloudImage> {
 
   @override
   int get hashCode => opacity.hashCode ^ color.hashCode;
+}
+
+// Top-level function for compute()
+List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
+  final List<List<dynamic>> rows = args['rows'];
+  final List<dynamic> header = args['header'];
+  final int latIndex = args['latIndex'];
+  final int lonIndex = args['lonIndex'];
+  final int quotaIndex = args['quotaIndex'];
+  final int nameIndex = args['nameIndex'];
+  final List<int> dateIndices = args['dateIndices'];
+  final String mushroomType = args['mushroomType'];
+
+  List<Map<String, dynamic>> result = [];
+  for (final row in rows.skip(1)) {
+    final double lat = row[latIndex] as double;
+    final double lon = row[lonIndex] as double;
+    final String name = row[nameIndex].toString();
+    final double quota = (row[quotaIndex] as num?)?.toDouble() ?? 0.0;
+    final sumValue = dateIndices.fold<double>(
+        0, (sum, i) => sum + ((row[i] as num?)?.toDouble() ?? 0.0));
+    result.add({
+      'lat': lat,
+      'lon': lon,
+      'name': name,
+      'quota': quota,
+      'sumValue': sumValue,
+    });
+  }
+  return result;
 }
