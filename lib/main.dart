@@ -79,7 +79,8 @@ class CloudSpot {
   final double opacity;
   final String info;
   final double cumulatedValue; // Add this field
-  CloudSpot(this.position, this.opacity, this.info, this.cumulatedValue);
+  final String? index; // Add index field
+  CloudSpot(this.position, this.opacity, this.info, this.cumulatedValue, {this.index});
 }
 
 class MapView extends StatefulWidget {
@@ -214,34 +215,37 @@ class _MapViewState extends State<MapView> {
     final lonIndex = header.indexOf("LON [°]");
     final quotaIndex = header.indexOf("Quota");
     final nameIndex = header.indexOf("Nome");
+    final indexIndex = header.indexOf("index"); // Add index column
     final startIdx = header.indexOf(start);
     final endIdx = header.indexOf(end);
     final dateIndices = startIdx == endIdx
         ? [startIdx]
         : List.generate(endIdx - startIdx + 1, (i) => startIdx + i);
 
-  // Use compute to run in background isolate
-  final List<Map<String, dynamic>> rawSpots = await compute(computeCloudSpots, {
-    'rows': rows,
-    'header': header,
-    'latIndex': latIndex,
-    'lonIndex': lonIndex,
-    'quotaIndex': quotaIndex,
-    'nameIndex': nameIndex,
-    'dateIndices': dateIndices,
-    'mushroomType': mushroomType,
-  });
+    // Use compute to run in background isolate
+    final List<Map<String, dynamic>> rawSpots = await compute(computeCloudSpots, {
+      'rows': rows,
+      'header': header,
+      'latIndex': latIndex,
+      'lonIndex': lonIndex,
+      'quotaIndex': quotaIndex,
+      'nameIndex': nameIndex,
+      'indexIndex': indexIndex, // Pass index column
+      'dateIndices': dateIndices,
+      'mushroomType': mushroomType,
+    });
 
-  // Map to CloudSpot and compute opacity on main thread
-  return rawSpots.map((data) {
-    final double opacity = computeOpacity(data['sumValue']);
-    return CloudSpot(
-      LatLng(data['lat'], data['lon']),
-      opacity,
-      '${data['name']}\nQuota: ${data['quota'].toStringAsFixed(1)} m\nCumulato: ${data['sumValue'].toStringAsFixed(1)} mm',
-      data['sumValue'],
-    );
-  }).toList();
+    // Map to CloudSpot and compute opacity on main thread
+    return rawSpots.map((data) {
+      final double opacity = computeOpacity(data['sumValue']);
+      return CloudSpot(
+        LatLng(data['lat'], data['lon']),
+        opacity,
+        '${data['name']}\nQuota: ${data['quota'].toStringAsFixed(1)} m\nCumulato: ${data['sumValue'].toStringAsFixed(1)} mm',
+        data['sumValue'],
+        index: data['index'], // Pass index
+      );
+    }).toList();
   }
 
   List<Marker> buildMarkers(List<CloudSpot> spots, String mushroomType) {
@@ -283,6 +287,24 @@ class _MapViewState extends State<MapView> {
                         ),
                       ),
                     ),
+                    if (spot.index != null && spot.index!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      GestureDetector(
+                        onTap: () async {
+                          final uri = Uri.parse('https://www.sir.toscana.it/monitoraggio/dettaglio.php?id=${spot.index}&title=&type=pluvio_men');
+                          if (await canLaunchUrl(uri)) {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          }
+                        },
+                        child: const Text(
+                          'Cumulato 30 g',
+                          style: TextStyle(
+                            color: Colors.blue,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -375,7 +397,7 @@ class _MapViewState extends State<MapView> {
   Future<void> _ensureCsvLoaded() async {
     if (_csvRowsCache != null && _csvHeaderCache != null) return;
     final response = await http.get(Uri.parse(
-      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/dati_completi.csv',
+      'https://raw.githubusercontent.com/tommyiaq/privacy-policy/main/assets/pluvio_completi.csv',
     ));
     if (response.statusCode != 200) {
       throw Exception('Failed to load CSV');
@@ -383,7 +405,7 @@ class _MapViewState extends State<MapView> {
     final raw = response.body;
     final rows = const CsvToListConverter(fieldDelimiter: ',', eol: '\n').convert(raw);
     _csvRowsCache = rows;
-    _csvHeaderCache = rows[0] as List<dynamic>;
+    _csvHeaderCache = rows[0];
   }
 
   Timer? _debounceDayPicker;
@@ -660,13 +682,13 @@ class GradientCloudImage extends ImageProvider<GradientCloudImage> {
 // Top-level function for compute()
 List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
   final List<List<dynamic>> rows = args['rows'];
-  final List<dynamic> header = args['header'];
   final int latIndex = args['latIndex'];
   final int lonIndex = args['lonIndex'];
   final int quotaIndex = args['quotaIndex'];
   final int nameIndex = args['nameIndex'];
+  final int indexIndex = args['indexIndex']; // Add index column
   final List<int> dateIndices = args['dateIndices'];
-  final String mushroomType = args['mushroomType'];
+  // final String mushroomType = args['mushroomType']; // not used
 
   List<Map<String, dynamic>> result = [];
   for (final row in rows.skip(1)) {
@@ -674,6 +696,7 @@ List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
     final double lon = row[lonIndex] as double;
     final String name = row[nameIndex].toString();
     final double quota = (row[quotaIndex] as num?)?.toDouble() ?? 0.0;
+    final String? index = indexIndex >= 0 ? row[indexIndex]?.toString() : null;
     final sumValue = dateIndices.fold<double>(
         0, (sum, i) => sum + ((row[i] as num?)?.toDouble() ?? 0.0));
     result.add({
@@ -682,6 +705,7 @@ List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
       'name': name,
       'quota': quota,
       'sumValue': sumValue,
+      'index': index, // Add index
     });
   }
   return result;
