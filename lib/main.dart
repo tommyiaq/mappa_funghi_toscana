@@ -238,7 +238,7 @@ class _MapViewState extends State<MapView> {
     return CloudSpot(
       LatLng(data['lat'], data['lon']),
       opacity,
-      '${data['name']}\nQuota: ${data['quota'].toStringAsFixed(1)} m\nRain: ${data['sumValue'].toStringAsFixed(1)} mm',
+      '${data['name']}\nQuota: ${data['quota'].toStringAsFixed(1)} m\nCumulato: ${data['sumValue'].toStringAsFixed(1)} mm',
       data['sumValue'],
     );
   }).toList();
