@@ -8,8 +8,10 @@ import 'package:latlong2/latlong.dart';
 import 'package:csv/csv.dart';
 import 'package:flutter_date_pickers/flutter_date_pickers.dart' as dp;
 import 'dart:async';
+import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
@@ -290,11 +292,15 @@ class _MapViewState extends State<MapView> {
                     if (spot.index != null && spot.index!.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       GestureDetector(
-                        onTap: () async {
-                          final uri = Uri.parse('https://www.sir.toscana.it/monitoraggio/dettaglio.php?id=${spot.index}&title=&type=pluvio_men');
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri, mode: LaunchMode.externalApplication);
-                          }
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => RainfallWebView(
+                                url: 'https://www.sir.toscana.it/monitoraggio/dettaglio.php?id=${spot.index}&title=&type=pluvio_men',
+                                stationId: spot.index,
+                              ),
+                            ),
+                          );
                         },
                         child: const Text(
                           'Cumulato 30 g',
@@ -583,25 +589,24 @@ class _MapViewState extends State<MapView> {
                     urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
                     userAgentPackageName: 'com.example.mappa_funghi',
                   ),
-                  // Overlays for each selected mushroom type
-                  ...mushroomSpots.entries.expand((entry) {
-                    final color = entry.key == 'Porcini' ? Colors.red : Colors.blue;
-                    return entry.value.map((spot) {
-                      const radius = 0.2;
-                      return OverlayImageLayer(
-                        overlayImages: [
+                  // Single OverlayImageLayer for all overlays
+                  OverlayImageLayer(
+                    overlayImages: [
+                      for (final entry in mushroomSpots.entries)
+                        for (final spot in entry.value)
                           OverlayImage(
                             bounds: LatLngBounds(
-                              LatLng(spot.position.latitude - radius, spot.position.longitude - radius),
-                              LatLng(spot.position.latitude + radius, spot.position.longitude + radius),
+                              LatLng(spot.position.latitude - 0.2, spot.position.longitude - 0.2),
+                              LatLng(spot.position.latitude + 0.2, spot.position.longitude + 0.2),
                             ),
                             opacity: 1.0,
-                            imageProvider: GradientCloudImage(opacity: spot.opacity, color: color),
+                            imageProvider: GradientCloudImage(
+                              opacity: spot.opacity,
+                              color: entry.key == 'Porcini' ? Colors.red : Colors.blue,
+                            ),
                           ),
-                        ],
-                      );
-                    });
-                  }),
+                    ],
+                  ),
                   // Combine all markers into a single MarkerLayer
                   MarkerLayer(
                     markers: mushroomMarkers.values.expand((markers) => markers).toList(),
@@ -709,4 +714,35 @@ List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
     });
   }
   return result;
+}
+
+class RainfallWebView extends StatefulWidget {
+  final String url;
+  final String? stationId;
+  const RainfallWebView({super.key, required this.url, this.stationId});
+
+  @override
+  State<RainfallWebView> createState() => _RainfallWebViewState();
+}
+
+class _RainfallWebViewState extends State<RainfallWebView> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Cumulato 30 g'),
+      ),
+      body: WebViewWidget(controller: _controller),
+    );
+  }
 }
