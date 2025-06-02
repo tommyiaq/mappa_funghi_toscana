@@ -696,7 +696,15 @@ List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
   // final String mushroomType = args['mushroomType']; // not used
 
   List<Map<String, dynamic>> result = [];
+  final minRequiredIndex = [latIndex, lonIndex, quotaIndex, nameIndex, indexIndex, ...dateIndices].fold(0, (a, b) => a > b ? a : b);
   for (final row in rows.skip(1)) {
+    if (row.length <= minRequiredIndex) {
+      continue;
+    }
+    if (row[latIndex] is! num) {
+      // Skip rows where lat is not a number (e.g., header or malformed row)
+      continue;
+    }
     final double lat = row[latIndex] as double;
     final double lon = row[lonIndex] as double;
     final String name = row[nameIndex].toString();
