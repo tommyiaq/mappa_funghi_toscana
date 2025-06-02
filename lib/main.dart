@@ -248,7 +248,7 @@ class _MapViewState extends State<MapView> {
         index: data['index'], // Pass index
       );
     }).toList();
-  }
+  } 
 
   List<Marker> buildMarkers(List<CloudSpot> spots, String mushroomType) {
     // Use default marker icon in Archivio, custom icon in Home
