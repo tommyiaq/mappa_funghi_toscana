@@ -29,8 +29,8 @@ class _MapViewState extends State<MapView> {
   List<String> availableDates = [];
   String? startDate;
   String? endDate;
-  late DateTime minCsvDate;
-  late DateTime maxCsvDate;
+  DateTime? minCsvDate;
+  DateTime? maxCsvDate;
 
   // Mushroom selection state
   final List<String> mushroomTypes = AppConstants.mushroomTypes;
@@ -81,7 +81,12 @@ class _MapViewState extends State<MapView> {
   Future<void> _loadArchivioData() async {
     if (startDate == null || endDate == null) return;
     
-    final cloudSpots = await CsvService.loadCloudSpots(startDate!, endDate!, 'Porcini');
+    final cloudSpots = await CsvService.loadCloudSpots(
+      startDate!, 
+      endDate!, 
+      'Porcini',
+      isArchivio: true,
+    );
     setState(() {
       mushroomSpots['Porcini'] = cloudSpots;
       mushroomMarkers['Porcini'] = buildMarkers(
@@ -111,6 +116,7 @@ class _MapViewState extends State<MapView> {
         dateRange.start,
         dateRange.end,
         type,
+        isArchivio: false,
       );
       
       newSpots[type] = spots;
@@ -224,13 +230,20 @@ class _MapViewState extends State<MapView> {
   }
 
   Widget _buildArchivioControls() {
+    if (minCsvDate == null || maxCsvDate == null) {
+      return const Padding(
+        padding: AppConstants.defaultPadding,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    
     return Padding(
       padding: AppConstants.defaultPadding,
       child: DateRangeSelector(
         startDate: startDate,
         endDate: endDate,
-        minCsvDate: minCsvDate,
-        maxCsvDate: maxCsvDate,
+        minCsvDate: minCsvDate!,
+        maxCsvDate: maxCsvDate!,
         availableDates: availableDates,
         onDateRangeChanged: _onDateRangeChanged,
       ),
