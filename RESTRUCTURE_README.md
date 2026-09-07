@@ -9,8 +9,6 @@ lib/
 ├── main.dart                    # Entry point - minimal, clean
 ├── constants/
 │   └── app_constants.dart       # Centralized configuration
-├── controllers/
-│   └── map_controller.dart      # State management (optional)
 ├── models/
 │   └── cloud_spot.dart         # Data models
 ├── pages/

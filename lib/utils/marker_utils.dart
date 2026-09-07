@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import '../constants/app_constants.dart';
 import '../models/cloud_spot.dart';
 import '../widgets/rainfall_webview.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,13 +11,34 @@ List<Marker> buildMarkers({
   required String mushroomType,
   required bool isArchivio,
   required BuildContext context,
+  bool applyTemperatureFilter = false,
 }) {
   final iconAsset = isArchivio
       ? null
       : (mushroomType == 'Porcini' ? 'assets/porcino.png' : 'assets/giallarella.png');
-  final threshold = mushroomType == 'Porcini' ? 50.0 : 30.0;
+  // Archivio is a rainfall explorer, so it uses a deliberately low bar: the
+  // user picked the date range themselves and wants to follow smaller events
+  // too. Home keeps the fruiting thresholds.
+  final threshold =
+      isArchivio ? 20.0 : (mushroomType == 'Porcini' ? 50.0 : 30.0);
+
+  /// Archivio deliberately does not filter on temperature: there it is a
+  /// rainfall explorer, so a station that rained must stay visible and the
+  /// temperature is shown in the popup only.
+  bool temperatureAllows(CloudSpot spot) {
+    if (!applyTemperatureFilter) return true;
+    final range = AppConstants.mushroomTempRanges[mushroomType];
+    final temp = spot.avgTemperature;
+    if (range == null || temp == null) return true;
+    final margin = spot.isEstimatedTemperature ? AppConstants.estimatedTempMargin : 0.0;
+    return temp >= range[0] - margin && temp <= range[1] + margin;
+  }
+
   return spots
-      .where((spot) => spot.opacity > 0.0 && spot.cumulatedValue > threshold)
+      .where((spot) =>
+          spot.opacity > 0.0 &&
+          spot.cumulatedValue > threshold &&
+          temperatureAllows(spot))
       .map((spot) => Marker(
             point: spot.position,
             width: isArchivio ? 25 : 25,  // Same size for both modes

@@ -5,7 +5,6 @@ import 'package:latlong2/latlong.dart';
 import '../constants/app_constants.dart';
 import '../models/cloud_spot.dart';
 import '../services/csv_service.dart';
-import '../utils/date_utils.dart';
 import '../utils/marker_utils.dart';
 import '../widgets/mushroom_selector.dart';
 import '../widgets/day_selector.dart';
@@ -46,6 +45,11 @@ class _MapViewState extends State<MapView> {
   // Debounce timer
   Timer? _debounceDayPicker;
 
+  /// True while a load is in flight. Without this the "no spots" message would
+  /// flash on every reload, because the marker map is empty until the fetch
+  /// and filtering finish.
+  bool _isLoading = true;
+
   @override
   void initState() {
     super.initState();
@@ -71,11 +75,28 @@ class _MapViewState extends State<MapView> {
   }
 
   Future<void> _loadAndSetClouds() async {
-    if (widget.isArchivio) {
-      await _loadArchivioData();
-    } else {
-      await _loadHomeData();
+    if (mounted) setState(() => _isLoading = true);
+    try {
+      if (widget.isArchivio) {
+        await _loadArchivioData();
+      } else {
+        await _loadHomeData();
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Home only. An empty map there is a real prediction -- nowhere in Tuscany
+  /// currently satisfies the rain and temperature windows -- so it is worth
+  /// saying out loud instead of leaving the user on a bare map. Archivio stays
+  /// silent: an empty result there just means the range the user chose had
+  /// little rain, which is an answer in itself.
+  bool get _showNoSpotsMessage {
+    if (widget.isArchivio || _isLoading) return false;
+    // Unchecking every mushroom is not a prediction of absence.
+    if (!selectedMushrooms.contains(true)) return false;
+    return mushroomMarkers.values.every((markers) => markers.isEmpty);
   }
 
   Future<void> _loadArchivioData() async {
@@ -108,17 +129,13 @@ class _MapViewState extends State<MapView> {
       if (!selectedMushrooms[i]) continue;
       
       final type = mushroomTypes[i];
-      final dateRange = _calculateDateRange(type, selectedDate);
-      
-      if (!_isValidDateRange(dateRange.start, dateRange.end)) continue;
-      
-      final spots = await CsvService.loadCloudSpots(
-        dateRange.start,
-        dateRange.end,
-        type,
-        isArchivio: false,
-      );
-      
+
+      // The rain window is now per station (heat slides it later), so there is
+      // no single range to validate up front. The target day itself need not be
+      // in the data either -- the selector offers six days ahead -- so the
+      // service locates it by date arithmetic and clamps the window.
+      final spots = await CsvService.loadCloudSpotsForDate(selectedDate, type);
+
       newSpots[type] = spots;
       if (mounted) {
         newMarkers[type] = buildMarkers(
@@ -126,6 +143,7 @@ class _MapViewState extends State<MapView> {
           mushroomType: type,
           isArchivio: widget.isArchivio,
           context: context,
+          applyTemperatureFilter: true,
         );
       }
     }
@@ -136,25 +154,6 @@ class _MapViewState extends State<MapView> {
         mushroomMarkers = newMarkers;
       });
     }
-  }
-
-  DateRange _calculateDateRange(String mushroomType, DateTime selectedDate) {
-    if (mushroomType == 'Porcini') {
-      return DateRange(
-        start: formatCsvDate(selectedDate.subtract(Duration(days: AppConstants.porciniDateOffsetStart))),
-        end: formatCsvDate(selectedDate.subtract(Duration(days: AppConstants.porciniDateOffsetEnd))),
-      );
-    } else {
-      // Giallarelle
-      return DateRange(
-        start: formatCsvDate(selectedDate.subtract(Duration(days: AppConstants.giallarelleeDateOffsetStart))),
-        end: formatCsvDate(selectedDate.subtract(Duration(days: AppConstants.giallarelleeDateOffsetEnd))),
-      );
-    }
-  }
-
-  bool _isValidDateRange(String start, String end) {
-    return availableDates.contains(start) && availableDates.contains(end);
   }
 
   void _onMushroomSelectionChanged(List<bool> newSelection) {
@@ -252,20 +251,54 @@ class _MapViewState extends State<MapView> {
 
   Widget _buildMap() {
     return Expanded(
-      child: FlutterMap(
-        options: const MapOptions(
-          initialCenter: LatLng(AppConstants.defaultMapLatitude, AppConstants.defaultMapLongitude),
-          initialZoom: AppConstants.defaultMapZoom,
-        ),
+      child: Stack(
         children: [
-          TileLayer(
-            urlTemplate: AppConstants.mapTileUrlTemplate,
-            userAgentPackageName: AppConstants.userAgentPackageName,
-          ),
-          _buildOverlayLayer(),
-          _buildMarkerLayer(),
+          _buildFlutterMap(),
+          if (_showNoSpotsMessage) _buildNoSpotsMessage(),
         ],
       ),
+    );
+  }
+
+  Widget _buildNoSpotsMessage() {
+    final theme = Theme.of(context);
+    return IgnorePointer(
+      child: Center(
+        child: Container(
+          margin: AppConstants.defaultPadding,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [
+              BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2)),
+            ],
+          ),
+          child: Text(
+            'Il modello non predice presenza di funghi in Toscana',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFlutterMap() {
+    return FlutterMap(
+      options: const MapOptions(
+        initialCenter:
+            LatLng(AppConstants.defaultMapLatitude, AppConstants.defaultMapLongitude),
+        initialZoom: AppConstants.defaultMapZoom,
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: AppConstants.mapTileUrlTemplate,
+          userAgentPackageName: AppConstants.userAgentPackageName,
+        ),
+        _buildOverlayLayer(),
+        _buildMarkerLayer(),
+      ],
     );
   }
 
@@ -300,11 +333,4 @@ class _MapViewState extends State<MapView> {
       markers: mushroomMarkers.values.expand((markers) => markers).toList(),
     );
   }
-}
-
-class DateRange {
-  final String start;
-  final String end;
-  
-  DateRange({required this.start, required this.end});
 }

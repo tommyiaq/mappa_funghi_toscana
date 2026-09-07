@@ -46,4 +46,16 @@ app.*.map.json
 /android/app/release
 /android/app/keys/*
 
+# Playwright MCP browser automation artifacts
+.playwright-mcp/
+*.har
+
+# Screenshots and page snapshots captured during automation
+# (root level only - pubspec.yaml/analysis_options.yaml are .yaml, unaffected)
+/*.png
+/*.yml
+
+# Local MCP server config (contains machine-specific absolute paths)
+.mcp.json
+
 
