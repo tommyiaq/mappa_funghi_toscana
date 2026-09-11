@@ -5,9 +5,11 @@
 /// Two modes:
 ///  * fixed window   - args['dateIndices'] holds the columns to sum. Used by
 ///                     Archivio, where the window is the range the user picked.
-///  * sliding window - args['shiftByStation'] is present, so each station gets
-///                     its own window: the base offsets moved later by that
-///                     station's heat-driven shift. Used by Home.
+///  * per-station    - args['daysByStation'] maps each station to the rain
+///                     columns that qualify for it. Used by Home, where every
+///                     rain day is judged by how warm it has been SINCE that
+///                     rain, so the qualifying days differ station by station.
+///                     Built by CsvService.computeQualifyingDays.
 List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
   final List<List<dynamic>> rows = args['rows'];
   final int latIndex = args['latIndex'];
@@ -16,34 +18,23 @@ List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
   final int nameIndex = args['nameIndex'];
   final int indexIndex = args['indexIndex'];
 
-  final Map<String, int>? shiftByStation = args['shiftByStation'];
-  // Sliding mode only: date columns in chronological order, plus where the
-  // target date sits in that list and the base offsets relative to it.
-  final List<int> orderedDateIndices =
-      (args['orderedDateIndices'] as List?)?.cast<int>() ?? const [];
-  final int targetPos = args['targetPos'] ?? -1;
-  final int baseStart = args['baseStart'] ?? 0;
-  final int baseEnd = args['baseEnd'] ?? 0;
+  final Map<String, List<int>>? daysByStation =
+      (args['daysByStation'] as Map?)?.map(
+          (k, v) => MapEntry(k.toString(), (v as List).cast<int>()));
+  // Days of acceleration actually applied, kept only for display.
+  final Map<String, int> accelByStation =
+      ((args['accelByStation'] as Map?) ?? const {})
+          .map((k, v) => MapEntry(k.toString(), v as int));
 
   final List<int> fixedDateIndices =
       (args['dateIndices'] as List?)?.cast<int>() ?? const [];
 
-  final bool sliding = shiftByStation != null && targetPos >= 0;
+  final bool perStation = daysByStation != null;
 
   /// Column indices to sum for one station.
   List<int> windowFor(String? station) {
-    if (!sliding) return fixedDateIndices;
-    final shift = shiftByStation[station] ?? 0;
-    // Offsets are negative (days before the target), so adding the shift moves
-    // the window later. Clamp to the data we actually have.
-    var from = targetPos + baseStart + shift;
-    var to = targetPos + baseEnd + shift;
-    if (to < from) return const [];
-    from = from.clamp(0, orderedDateIndices.length - 1);
-    to = to.clamp(0, orderedDateIndices.length - 1);
-    return [
-      for (int p = from; p <= to; p++) orderedDateIndices[p],
-    ];
+    if (!perStation) return fixedDateIndices;
+    return daysByStation[station] ?? const [];
   }
 
   final int fixedMax = [
@@ -53,7 +44,8 @@ List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
     nameIndex,
     indexIndex,
     ...fixedDateIndices,
-    ...orderedDateIndices,
+    if (daysByStation != null)
+      for (final days in daysByStation.values) ...days,
   ].fold(0, (a, b) => a > b ? a : b);
 
   final List<Map<String, dynamic>> result = [];
@@ -84,10 +76,45 @@ List<Map<String, dynamic>> computeCloudSpots(Map<String, dynamic> args) {
       'quota': quota,
       'sumValue': sumValue,
       'index': index,
-      'shift': sliding ? (shiftByStation[index] ?? 0) : 0,
+      'shift': perStation ? (accelByStation[index] ?? 0) : 0,
     });
   }
   return result;
+}
+
+/// Whether rain that fell [ageDays] before the target can have fruited by it.
+///
+/// [postRainMeanTemp] is the mean daily temperature over the days BETWEEN that
+/// rain and the target -- the only stretch that can accelerate this particular
+/// flush. Null (or no data) means no acceleration, which is the conservative
+/// answer: the rain keeps its full base lag.
+///
+/// [baseLo]/[baseHi] are the base lag bounds in days, both positive
+/// (porcini 12..17, giallarelle 8..12).
+bool rainDayQualifies({
+  required int ageDays,
+  required double? postRainMeanTemp,
+  required int baseLo,
+  required int baseHi,
+  required double pivot,
+  required int maxAccel,
+}) {
+  // Rain on or after the target cannot have produced anything by it.
+  if (ageDays < 1) return false;
+  final double accel = postRainMeanTemp == null
+      ? 0.0
+      : (postRainMeanTemp - pivot).clamp(0.0, maxAccel.toDouble());
+  return ageDays >= baseLo - accel && ageDays <= baseHi - accel;
+}
+
+/// Days of acceleration applied, for display alongside a spot.
+int warmthAcceleration({
+  required double? postRainMeanTemp,
+  required double pivot,
+  required int maxAccel,
+}) {
+  if (postRainMeanTemp == null) return 0;
+  return (postRainMeanTemp - pivot).clamp(0.0, maxAccel.toDouble()).round();
 }
 
 /// Computes the opacity for a cloud spot based on its value.

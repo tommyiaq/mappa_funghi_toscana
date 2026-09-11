@@ -30,14 +30,30 @@ class AppConstants {
   static const int giallarelleeDateOffsetStart = 12;
   static const int giallarelleeDateOffsetEnd = 8;
 
-  // Heat shortens the lag between the rain and the flush, so the window slides.
-  // At or below tempPivotCelsius the base offsets apply unchanged; every degree
-  // of the station's recent mean above it moves the window one day later, i.e.
-  // closer to the target date. Computed per station, because the reference
-  // temperature spans ~11 C across the network (coast to Apennines).
+  // Heat shortens the lag between the rain and the flush. At or below
+  // tempPivotCelsius the base offsets apply unchanged; every degree of the
+  // post-rain mean above it brings the flush one day forward. Evaluated per
+  // station, because that mean spans ~11 C across the network (coast to
+  // Apennines), and per rain day -- see maxWarmthAccelerationDays.
   static const double tempPivotCelsius = 18.0;
-  static const int refTempDays = 12;
-  static const int maxWindowShiftDays = 12;
+
+  // Warmth shortens the lag between rain and flush -- but only warmth that
+  // fell AFTER the rain and before the target date can do so. The temperature
+  // of days before the rain landed is irrelevant: it cannot accelerate a flush
+  // from rain that had not yet fallen. So the acceleration is computed per
+  // candidate rain day, over the days between that rain and the target.
+  //
+  // This also makes the model self-limiting. Rain two days ago has almost no
+  // post-rain period, so its acceleration is ~0 and its lag stays at the full
+  // 12-17 days, which means it cannot masquerade as today's flush. The earlier
+  // per-station shift had no such property: it was driven by the last 12 days
+  // regardless of when the rain fell, so the 09/09/2026 downpour showed up as
+  // fruiting on 11/09 -- two days later.
+  //
+  // The cap: no amount of heat makes porcini appear a few days after rain.
+  // 4 days keeps porcini at 8-13 instead of the base 12-17, and still
+  // reproduces the Monticiano La Pineta find of 30/08/2026 (60.7 mm).
+  static const int maxWarmthAccelerationDays = 4;
 
   // Fruiting temperature range per species, tested against the mean of the
   // daily mean temperatures over the fruttificazione window (days -9..-2).

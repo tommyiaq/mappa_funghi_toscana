@@ -179,52 +179,117 @@ class CsvService {
         eligible.length > count ? eligible.length - count : 0);
   }
 
-  /// How many days to slide each station's rain window, from its own recent
-  /// mean temperature. Cool stations keep the base window, hot ones move it
-  /// later. See AppConstants.tempPivotCelsius.
-  static Future<Map<String, int>> computeWindowShifts(DateTime target) async {
+  /// Which rain days can plausibly have fruited by [target], per station.
+  ///
+  /// Rain fruits after a lag, and warmth shortens it -- but only warmth that
+  /// occurred AFTER that rain and before the target. Temperatures from before
+  /// the rain fell cannot accelerate a flush that had nothing to grow from.
+  /// So every candidate rain day is judged on the mean temperature of the days
+  /// between it and the target, which is also what keeps the model honest:
+  /// rain two days ago has almost no post-rain stretch, so its lag stays at
+  /// the full base and it cannot show up as today's flush.
+  ///
+  /// Returns the rain column indices per station, plus the acceleration
+  /// applied (display only).
+  static Future<Map<String, Map<String, dynamic>>> computeQualifyingDays(
+      DateTime target, String mushroomType) async {
+    await ensureCsvLoaded();
     await ensureTempCsvLoaded();
-    final rows = _tempCsvRowsCache!;
-    final header = _tempCsvHeaderCache!;
-    final indexIndex = header.indexOf('index');
-    if (indexIndex == -1) return {};
 
-    final window = _recentWindow(
-      _dateColumnsOf(header),
-      target.subtract(const Duration(days: 1)),
-      AppConstants.refTempDays,
-    );
-    final columns = <int>[];
-    for (final c in window) {
-      final idx = header.indexOf(c);
-      if (idx != -1) columns.add(idx);
+    final rainHeader = _csvHeaderCache!;
+    final tempHeader = _tempCsvHeaderCache!;
+    final tempRows = _tempCsvRowsCache!;
+    final tempIndexCol = tempHeader.indexOf('index');
+    if (tempIndexCol == -1) return {};
+
+    final day = _dayOf(target);
+
+    // Rain columns, with their age in days relative to the target.
+    final rainDays = <MapEntry<int, int>>[]; // column index -> age in days
+    for (int i = 0; i < rainHeader.length; i++) {
+      final h = rainHeader[i];
+      if (h is String && _dateColumn.hasMatch(h)) {
+        rainDays.add(MapEntry(i, day.difference(parseCsvDate(h)).inDays));
+      }
     }
-    if (columns.isEmpty) return {};
+    if (rainDays.isEmpty) return {};
 
-    final shifts = <String, int>{};
-    for (final row in rows.skip(1)) {
-      final id = row[indexIndex]?.toString();
+    // Temperature columns up to the target, chronological.
+    final tempCols = <MapEntry<int, DateTime>>[];
+    for (int i = 0; i < tempHeader.length; i++) {
+      final h = tempHeader[i];
+      if (h is String && _dateColumn.hasMatch(h)) {
+        final d = parseCsvDate(h);
+        if (!d.isAfter(day)) tempCols.add(MapEntry(i, d));
+      }
+    }
+    tempCols.sort((a, b) => a.value.compareTo(b.value));
+
+    final baseLo = mushroomType == 'Porcini'
+        ? AppConstants.porciniDateOffsetEnd
+        : AppConstants.giallarelleeDateOffsetEnd;
+    final baseHi = mushroomType == 'Porcini'
+        ? AppConstants.porciniDateOffsetStart
+        : AppConstants.giallarelleeDateOffsetStart;
+
+    final out = <String, Map<String, dynamic>>{};
+    for (final row in tempRows.skip(1)) {
+      final id = row[tempIndexCol]?.toString();
       if (id == null || id.isEmpty) continue;
 
-      double sum = 0;
-      int count = 0;
-      for (final idx in columns) {
-        if (idx >= row.length) continue;
-        final value = row[idx];
-        if (value == null || value == '') continue;
-        final numValue =
-            value is num ? value.toDouble() : double.tryParse(value.toString());
-        if (numValue == null) continue;
-        sum += numValue;
-        count++;
+      // Suffix means: mean temperature from position p to the target. Lets a
+      // day's post-rain mean be read off in O(1) instead of rescanning.
+      final n = tempCols.length;
+      final suffixSum = List<double>.filled(n + 1, 0);
+      final suffixCount = List<int>.filled(n + 1, 0);
+      for (int p = n - 1; p >= 0; p--) {
+        final idx = tempCols[p].key;
+        double? v;
+        if (idx < row.length) {
+          final raw = row[idx];
+          if (raw != null && raw != '') {
+            v = raw is num ? raw.toDouble() : double.tryParse(raw.toString());
+          }
+        }
+        suffixSum[p] = suffixSum[p + 1] + (v ?? 0);
+        suffixCount[p] = suffixCount[p + 1] + (v == null ? 0 : 1);
       }
-      if (count == 0) continue;
 
-      final refTemp = sum / count;
-      final raw = (refTemp - AppConstants.tempPivotCelsius).round();
-      shifts[id] = raw.clamp(0, AppConstants.maxWindowShiftDays);
+      final days = <int>[];
+      int accel = 0;
+      for (final entry in rainDays) {
+        final age = entry.value;
+        if (age < 1) continue;
+        // First temperature column strictly after this rain day.
+        final rainDate = day.subtract(Duration(days: age));
+        int p = 0;
+        while (p < n && !tempCols[p].value.isAfter(rainDate)) {
+          p++;
+        }
+        final count = suffixCount[p];
+        final mean = count == 0 ? null : suffixSum[p] / count;
+        if (rainDayQualifies(
+          ageDays: age,
+          postRainMeanTemp: mean,
+          baseLo: baseLo,
+          baseHi: baseHi,
+          pivot: AppConstants.tempPivotCelsius,
+          maxAccel: AppConstants.maxWarmthAccelerationDays,
+        )) {
+          days.add(entry.key);
+          final a = warmthAcceleration(
+            postRainMeanTemp: mean,
+            pivot: AppConstants.tempPivotCelsius,
+            maxAccel: AppConstants.maxWarmthAccelerationDays,
+          );
+          if (a > accel) accel = a;
+        }
+      }
+      if (days.isEmpty) continue;
+      days.sort();
+      out[id] = {'days': days, 'accel': accel};
     }
-    return shifts;
+    return out;
   }
 
   /// Home: each station gets its own rain window, slid later by its own heat.
@@ -235,45 +300,25 @@ class CsvService {
     await ensureCsvLoaded();
     final header = _csvHeaderCache!;
 
-    final orderedDates = <String>[];
-    final orderedIndices = <int>[];
-    for (int i = 0; i < header.length; i++) {
-      final h = header[i];
-      if (h is String && _dateColumn.hasMatch(h)) {
-        orderedDates.add(h);
-        orderedIndices.add(i);
-      }
-    }
-    if (orderedDates.isEmpty) return [];
+    final hasDates = header.any(
+        (h) => h is String && _dateColumn.hasMatch(h));
+    if (!hasDates) return [];
 
-    // The target is frequently NOT a column: the day selector offers today
-    // plus six days ahead, and the newest complete day may be yesterday. So
-    // locate it by counting days from the last column rather than looking it
-    // up, which lets targetPos sit past the end. The window is what has to
-    // land inside the data, and computeCloudSpots clamps it.
-    final lastDate = parseCsvDate(orderedDates.last);
-    final targetPos = (orderedDates.length - 1) +
-        _dayOf(target).difference(lastDate).inDays;
-
-    final baseStart = mushroomType == 'Porcini'
-        ? -AppConstants.porciniDateOffsetStart
-        : -AppConstants.giallarelleeDateOffsetStart;
-    final baseEnd = mushroomType == 'Porcini'
-        ? -AppConstants.porciniDateOffsetEnd
-        : -AppConstants.giallarelleeDateOffsetEnd;
-
-    final shifts = await computeWindowShifts(target);
+    final qualifying = await computeQualifyingDays(target, mushroomType);
+    final daysByStation = <String, List<int>>{};
+    final accelByStation = <String, int>{};
+    qualifying.forEach((id, v) {
+      daysByStation[id] = (v['days'] as List).cast<int>();
+      accelByStation[id] = v['accel'] as int;
+    });
 
     return _buildSpots(
       mushroomType: mushroomType,
       isArchivio: false,
       target: target,
       extraArgs: {
-        'shiftByStation': shifts,
-        'orderedDateIndices': orderedIndices,
-        'targetPos': targetPos,
-        'baseStart': baseStart,
-        'baseEnd': baseEnd,
+        'daysByStation': daysByStation,
+        'accelByStation': accelByStation,
       },
     );
   }
