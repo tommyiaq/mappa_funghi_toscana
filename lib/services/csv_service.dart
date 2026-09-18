@@ -156,29 +156,6 @@ class CsvService {
   /// Date-only, so day arithmetic is not thrown off by a time component.
   static DateTime _dayOf(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  /// Date columns of a header, in the order they appear (chronological).
-  static List<String> _dateColumnsOf(List<dynamic> header) => [
-        for (final h in header)
-          if (h is String && _dateColumn.hasMatch(h)) h,
-      ];
-
-  /// The last [count] date columns falling on or before [notAfter].
-  ///
-  /// The day selector offers today plus six days ahead, so the target is often
-  /// beyond the data. Anchoring on the most recent available days keeps the
-  /// temperature windows meaningful instead of silently empty.
-  static List<String> _recentWindow(
-      List<String> all, DateTime notAfter, int count) {
-    final limit = _dayOf(notAfter);
-    final eligible = [
-      for (final c in all)
-        if (!parseCsvDate(c).isAfter(limit)) c,
-    ];
-    if (eligible.isEmpty) return const [];
-    return eligible.sublist(
-        eligible.length > count ? eligible.length - count : 0);
-  }
-
   /// Which rain days can plausibly have fruited by [target], per station.
   ///
   /// Rain fruits after a lag, and warmth shortens it -- but only warmth that
@@ -257,6 +234,7 @@ class CsvService {
 
       final days = <int>[];
       int accel = 0;
+      DateTime? earliestRain;
       for (final entry in rainDays) {
         final age = entry.value;
         if (age < 1) continue;
@@ -277,6 +255,9 @@ class CsvService {
           maxAccel: AppConstants.maxWarmthAccelerationDays,
         )) {
           days.add(entry.key);
+          if (earliestRain == null || rainDate.isBefore(earliestRain)) {
+            earliestRain = rainDate;
+          }
           final a = warmthAcceleration(
             postRainMeanTemp: mean,
             pivot: AppConstants.tempPivotCelsius,
@@ -287,7 +268,23 @@ class CsvService {
       }
       if (days.isEmpty) continue;
       days.sort();
-      out[id] = {'days': days, 'accel': accel};
+
+      // Mean temperature over the incubation itself: from the earliest
+      // qualifying rain to the target. That is the stretch during which the
+      // flush actually develops, so it is what the species' temperature range
+      // should be judged on -- a fixed trailing week would ignore the first
+      // days of a long incubation and, being the same for both species, would
+      // not match their different lags.
+      int q = 0;
+      while (q < n && tempCols[q].value.isBefore(earliestRain!)) {
+        q++;
+      }
+      final incCount = suffixCount[q];
+      out[id] = {
+        'days': days,
+        'accel': accel,
+        if (incCount > 0) 'temp': suffixSum[q] / incCount,
+      };
     }
     return out;
   }
@@ -307,9 +304,12 @@ class CsvService {
     final qualifying = await computeQualifyingDays(target, mushroomType);
     final daysByStation = <String, List<int>>{};
     final accelByStation = <String, int>{};
+    final tempByStation = <String, double>{};
     qualifying.forEach((id, v) {
       daysByStation[id] = (v['days'] as List).cast<int>();
       accelByStation[id] = v['accel'] as int;
+      final t = v['temp'];
+      if (t is double) tempByStation[id] = t;
     });
 
     return _buildSpots(
@@ -320,6 +320,7 @@ class CsvService {
         'daysByStation': daysByStation,
         'accelByStation': accelByStation,
       },
+      tempByStation: tempByStation,
     );
   }
 
@@ -356,6 +357,7 @@ class CsvService {
     DateTime? target,
     String? rangeStart,
     String? rangeEnd,
+    Map<String, double>? tempByStation,
   }) async {
     final rows = _csvRowsCache!;
     final header = _csvHeaderCache!;
@@ -374,27 +376,19 @@ class CsvService {
 
     await ensureTempCsvLoaded();
 
-    // Temperature window for the fruttificazione mean.
-    String tempStart;
-    String tempEnd;
+    // Archivio shows the mean over exactly the range the user picked -- which
+    // is what its "Temp. media periodo" label claims. It used to offset the
+    // window (start-7 .. end-2) to approximate fruiting conditions, but
+    // Archivio applies no temperature filter: the number is there to be read
+    // alongside the rainfall of that period, so it has to be that period.
+    //
+    // Home needs no window here: tempByStation already carries each station's
+    // mean over its own incubation, from computeQualifyingDays.
+    String? tempStart;
+    String? tempEnd;
     if (isArchivio && rangeStart != null && rangeEnd != null) {
-      final startDate = parseCsvDate(rangeStart);
-      final endDate = parseCsvDate(rangeEnd);
-      tempStart = formatCsvDate(startDate.subtract(const Duration(days: 7)));
-      tempEnd = formatCsvDate(endDate.subtract(const Duration(days: 2)));
-    } else {
-      // Nominally days -9..-2, but for a forecast day those run into the
-      // future. Fall back to the most recent 8 available days, otherwise the
-      // temperature would be null and the filter would pass everything.
-      final base = target ?? DateTime.now();
-      final window = _recentWindow(
-        _dateColumnsOf(_tempCsvHeaderCache!),
-        base.subtract(const Duration(days: 2)),
-        8,
-      );
-      if (window.isEmpty) return [];
-      tempStart = window.first;
-      tempEnd = window.last;
+      tempStart = rangeStart;
+      tempEnd = rangeEnd;
     }
 
     final estimated = _estimatedCache ?? const <String, bool>{};
@@ -406,7 +400,11 @@ class CsvService {
       double? avgTemp;
       final String? id = data['index'];
       if (id != null && id.isNotEmpty) {
-        avgTemp = await getAverageTemperature(id, tempStart, tempEnd);
+        avgTemp = tempByStation != null
+            ? tempByStation[id]
+            : (tempStart != null && tempEnd != null
+                ? await getAverageTemperature(id, tempStart, tempEnd)
+                : null);
       }
       final bool isEstimated = id != null && (estimated[id] ?? false);
 

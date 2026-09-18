@@ -35,7 +35,18 @@ class AppConstants {
   // post-rain mean above it brings the flush one day forward. Evaluated per
   // station, because that mean spans ~11 C across the network (coast to
   // Apennines), and per rain day -- see maxWarmthAccelerationDays.
-  static const double tempPivotCelsius = 18.0;
+  // 20, not 18: the post-rain mean across the network runs p25 19.5 /
+  // median 21.2 in September, so a pivot of 18 made nearly every station
+  // "hot" -- 31% saturated the cap and the median acceleration was 3.2 days,
+  // which turned a dynamic window into a near-constant -3/-4. At 20 the
+  // median drops to 1.2 days and only 2% reach the cap.
+  //
+  // Bounded by two field observations: Monticiano La Pineta (porcini found
+  // 30/08/2026 from rain 10 days earlier) needs at least 2 days of
+  // acceleration, and Barberino on 18/09/2026 must NOT show porcini from
+  // rain 9 days earlier, which needs under 3. At 20 they come out 3.8 and
+  // 1.5 -- comfortably either side.
+  static const double tempPivotCelsius = 20.0;
 
   // Warmth shortens the lag between rain and flush -- but only warmth that
   // fell AFTER the rain and before the target date can do so. The temperature
@@ -57,9 +68,26 @@ class AppConstants {
 
   // Fruiting temperature range per species, tested against the mean of the
   // daily mean temperatures over the fruttificazione window (days -9..-2).
+  //
+  // Giallarelle (Cantharellus cibarius var. pallens) upper bound lowered from
+  // 22 to 20 in Sept 2026. The literature puts ideal fruiting around 10-21 C
+  // of ambient air, and reports that hot dry summers suppress fruiting while
+  // cool moist ones produce abundant flushes. 21 is an AMBIENT figure, while
+  // this range is tested against the mean of daily MEAN temperatures, which
+  // sits several degrees below the daytime maximum -- a daily mean of 21 C in
+  // Tuscany implies highs near 28 C. So 20 on this metric is still lenient
+  // against the sources.
+  //
+  // Note the 22.5 C often quoted for C. cibarius is the lab optimum for
+  // MYCELIAL growth, not for fruiting, and fruiting wants it cooler than the
+  // mycelium does -- it is not an upper bound for this filter.
+  //
+  // The 2 C floor is deliberately generous: chanterelles fruit well into cold
+  // Tuscan autumns, and on a daily-mean metric a higher floor would erase the
+  // late season.
   static const Map<String, List<double>> mushroomTempRanges = {
     'Porcini': [6.0, 26.0],
-    'Giallarelle': [2.0, 22.0],
+    'Giallarelle': [2.0, 20.0],
   };
 
   // Stations without a thermometer get an interpolated temperature, which
