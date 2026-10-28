@@ -103,4 +103,31 @@ class AppConstants {
   static const double spacingSmall = 4.0;
   static const double spacingMedium = 8.0;
   static const double spacingLarge = 12.0;
+
+  // --- Recruiting people to interview --------------------------------------
+  // Play Console only reports aggregates, so it can say how many people use
+  // the app often but never which ones. The app therefore asks the heavy
+  // users itself, once, and lets them volunteer. Counting happens on the
+  // device only -- nothing is transmitted, so "no data collected" stays true.
+
+  /// Where the prompt sends people: a Google Calendar booking page, so they
+  /// pick a slot themselves. Far less friction than composing a mail, and it
+  /// lands straight in the calendar instead of in an inbox to triage.
+  static const String interviewBookingUrl =
+      'https://calendar.app.google/RXMZcJLWALEVmqrj6';
+
+  /// A return to the foreground only counts as a new session after this long
+  /// away. Without it, switching apps a few times would reach the open count
+  /// on its own and the signal would mean nothing.
+  static const Duration sessionGap = Duration(minutes: 30);
+
+  /// Steady path: this many consecutive days of use.
+  static const int interviewStreakDays = 4;
+
+  /// Intense path: fewer consecutive days, but more sessions inside them.
+  /// Fires a day earlier than the steady path for the heaviest users.
+  static const int interviewIntenseStreakDays = 3;
+
+  /// Strictly more than this many sessions within the current streak.
+  static const int interviewIntenseOpens = 5;
 }
